@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: loomsense_db
+    environment:
+      POSTGRES_DB: loomsense
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: loomsense_redis
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: backend.Dockerfile
+    container_name: loomsense_backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgrespassword@db:5432/loomsense
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=loomsensedevsecretkey
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./backend:/workspace
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: backend.Dockerfile
+    container_name: loomsense_celery_worker
+    command: celery -A app.core.celery worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgrespassword@db:5432/loomsense
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - db
+
+  celery_flower:
+    image: mher/flower:0.9.7
+    container_name: loomsense_flower
+    command: flower --port=5555 --broker=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: frontend.Dockerfile
+    container_name: loomsense_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: loomsense_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: loomsense_grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  postgres_data:
+  grafana_data:
