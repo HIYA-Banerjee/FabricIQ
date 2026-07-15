@@ -1,4 +1,12 @@
-from ortools.sat.python import cp_model  # pyrefly: ignore [missing-import]
+try:
+    from ortools.sat.python import cp_model  # pyrefly: ignore [missing-import]
+    OR_TOOLS_AVAILABLE = True
+except Exception as e:
+    import sys
+    print(f"WARNING: OR-Tools could not be imported due to DLL/platform error: {e}", file=sys.stderr)
+    OR_TOOLS_AVAILABLE = False
+    cp_model = None
+
 from datetime import datetime, timedelta
 import pandas as pd
 from loguru import logger  # pyrefly: ignore [missing-import]
@@ -11,15 +19,45 @@ class ORToolsScheduler:
         Assigns order steps (Spinning -> Weaving -> Dyeing -> QC) to machines
         to minimize total completion delays and load balance workloads.
         """
-        model = cp_model.CpModel()
-        
-        # 1. Prepare data
         tasks_per_order = ["Spinning", "Weaving", "Dyeing", "QC"]
         machines_by_type = {}
         for m in machines:
             if m.type not in machines_by_type:
                 machines_by_type[m.type] = []
             machines_by_type[m.type].append(m)
+
+        if not OR_TOOLS_AVAILABLE:
+            success = False
+            curr_hour = 0
+            scheduled_jobs = []
+            machine_loads = {m.id: 0 for m in machines}
+            for idx, order in enumerate(orders):
+                order_id = order.id
+                for task_name in tasks_per_order:
+                    candidate_machines = machines_by_type.get(task_name, [])
+                    if candidate_machines:
+                        m = candidate_machines[idx % len(candidate_machines)]
+                        duration = max(2, int(order.quantity / 50.0))
+                        scheduled_jobs.append({
+                            "order_id": order_id,
+                            "task_name": task_name,
+                            "machine_id": m.id,
+                            "start_hour": curr_hour,
+                            "end_hour": curr_hour + duration,
+                            "duration_hours": duration
+                        })
+                        machine_loads[m.id] += duration
+                        curr_hour += duration
+            return {
+                "success": success,
+                "scheduled_jobs": scheduled_jobs,
+                "machine_loads": machine_loads,
+                "delayed_orders_count": 0,
+                "total_delay_hours": 0,
+                "makespan_hours": curr_hour
+            }
+
+        model = cp_model.CpModel()
 
         # Max scheduling horizon: e.g. 500 hours
         horizon = 1000
