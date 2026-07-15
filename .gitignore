@@ -8,7 +8,7 @@ venv/
 *.db
 *.sqlite3
 model_metrics.json
-models/
+backend/models/
 logs/
 
 # Node / Next.js
